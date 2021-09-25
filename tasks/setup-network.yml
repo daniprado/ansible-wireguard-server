@@ -1,0 +1,66 @@
+---
+
+  - name: Initial facts
+    set_fact:
+      config_server: "/etc/wireguard/{{ wg_net.name }}"
+  - name: Check if config already exists on server
+    stat:
+      path: "{{ config_server }}"
+    register: config
+
+  - name: Enable packet forwarding for IPv4
+    sysctl:
+      name: net.ipv4.ip_forward
+      value: "1"
+      sysctl_set: yes
+      state: present
+      reload: yes
+    when: wg_net.nat
+
+  - block:
+      - name: "Create config route for network {{ wg_net.name }}"
+        file:
+          dest: "{{ config_server }}"
+          state: directory
+      - name: Generate WireGuard keys
+        shell: "umask 077 && wg genkey | tee {{ config_server }}/privatekey | wg pubkey > {{ config_server }}/publickey"
+    when: not config.stat.exists
+
+  - name: Register WireGuard private key as a variable
+    slurp:
+      src: "{{ config_server }}/privatekey"
+    register: "wg_server_privatekey"
+  - name: Register WireGuard public key as a variable
+    slurp:
+      src: "{{ config_server }}/publickey"
+    register: "wg_server_publickey"
+
+  - name: Generate WireGuard configuration file
+    template:
+      src: server.j2.conf
+      dest: "{{ config_server }}.conf"
+      owner: root
+      group: root
+      mode: 0600
+      force: no
+    when: not config.stat.exists
+
+  - include: generate-client_config.yml
+    vars:
+      wg_client: "{{ client }}"
+    loop: "{{ wireguard.clients }}"
+    loop_control:
+      loop_var: "client"
+
+  - name: Start and enable WireGuard service
+    service:
+      name: "wg-quick@{{ wg_net.name }}"
+      state: started
+      enabled: yes
+
+  - name: UFW - Allow WG connections
+    ufw:
+      rule: allow
+      port: "{{ wg_net.server_port }}"
+      proto: udp
+

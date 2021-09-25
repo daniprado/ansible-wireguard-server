@@ -1,0 +1,8 @@
+---
+
+  - include: install-software.yml
+  - include: setup-network.yml
+    vars:
+      wg_net: "{{ item }}"
+    loop: "{{ wireguard.networks }}"
+

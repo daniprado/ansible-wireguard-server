@@ -1,0 +1,63 @@
+---
+
+  - name: "Set facts"
+    set_fact:
+      config_client: "/etc/wireguard/{{ wg_net.name }}/clients/{{ wg_client.name }}"
+      config_server: "/etc/wireguard/{{ wg_net.name }}"
+
+  - name: Check if config already exists on client
+    stat:
+      path: "{{ config_client }}"
+    register: config
+
+  - block:
+      - name: "Create config route for network {{ wg_net.name }} in {{ wg_client.name }}"
+        file:
+          dest: "{{ config_client }}"
+          state: directory
+      - name: Generate WireGuard keys
+        shell: "umask 077 && wg genkey | tee {{ config_client }}/privatekey | wg pubkey > {{ config_client }}/publickey"
+      - name: Generate WireGuard preshared key
+        shell: "umask 077 && wg genpsk > {{ config_client }}/presharedkey"
+    when: not config.stat.exists
+
+  - name: Register WireGuard private key as a variable
+    slurp:
+      src: "{{ config_client }}/privatekey"
+    register: wg_privatekey
+  - name: Register WireGuard public key as a variable
+    slurp:
+      src: "{{ config_client }}/publickey"
+    register: wg_publickey
+  - name: Register WireGuard preshared key as a variable
+    slurp:
+      src: "{{ config_client }}/presharedkey"
+    register: wg_presharedkey
+
+  - name: Generate WireGuard client configuration file
+    template:
+      src: client.j2.conf
+      dest: "{{ config_client }}.conf"
+      owner: root
+      group: root
+      mode: 0600
+      force: no
+
+  - name: "Add client {{ wg_client.name }} to server WireGuard config file"
+    blockinfile:
+      path: "{{ config_server }}.conf"
+      marker: "# {mark} {{ wg_client.name }}"
+      block: |
+        [Peer]
+        PublicKey = {{ wg_publickey['content'] | b64decode }}PresharedKey = {{ wg_presharedkey['content'] | b64decode }}AllowedIPs = {{ wg_net.network_segment }}.{{ wg_client.client_number }}/32
+
+  - block:
+      - name: "Show config in QR format for {{ wg_client.name }} and network {{ wg_net.name }}"
+        shell: "qrencode -t ansiutf8 < {{ config_client }}.conf"
+        register: qr
+      - debug:
+          msg: "{{ qr.stdout_lines }}"
+      - pause:
+          prompt: "Copy config of network {{ wg_net.name }} to client {{ wg_client.name }}"          
+    when: (mobiles == True) and ('mobile' in wg_client) and (wg_client.mobile == True)
+

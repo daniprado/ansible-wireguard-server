@@ -1,0 +1,14 @@
+---
+
+  - name: Install packages
+    package:
+      name:
+        - "wireguard"
+        - "qrencode"
+      state: latest
+
+  - name: Create WireGuard config directory
+    file:
+      dest: /etc/wireguard
+      state: directory
+
